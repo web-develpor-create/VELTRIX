@@ -1,0 +1,72 @@
+# ============================================================
+#  VELTRIX — Netlify deployment configuration
+#  Docs: https://docs.netlify.com/configure-builds/file-based-configuration/
+# ============================================================
+
+[build]
+  command = "bun run db:generate && bun run build"
+  # Next.js standalone output → .next/standalone is the deploy target
+  publish = ".next/standalone"
+  functions = ".next/standalone"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Bun is supported on Netlify via the bun-runtime plugin
+  # but we set npm_config flags to ensure Prisma generates correctly.
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# Prisma needs the binary engine even on serverless
+[build.environment.PRISMA_CLI_QUERY_ENGINE_TYPE]
+  value = "binary"
+
+# ============================================================
+#  Headers — security hardening
+# ============================================================
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+
+# Static assets get long-lived cache
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# ============================================================
+#  SPA fallback — Veltrix is a single-page app, but Next.js
+#  handles routing for /api/* server-side functions.
+# ============================================================
+
+# All non-file requests fall through to Next.js (handled by the Next runtime plugin)
+
+# ============================================================
+#  Required environment variables (set in Netlify dashboard)
+# ============================================================
+#
+#  DATABASE_URL           — postgres connection string (Neon, Supabase, etc.)
+#                           e.g. "postgresql://user:pass@host/db?sslmode=require"
+#  ENCRYPTION_KEY         — 32+ char random string, used to encrypt user hosting tokens
+#                           Generate: openssl rand -base64 48
+#  NEXTAUTH_SECRET        — fallback key derivation if ENCRYPTION_KEY is unset
+#                           Generate: openssl rand -base64 32
+#
+#  HOSTING_PROVIDER       — "netlify" (default) or "cloudflare_pages"
+#  FREE_PLAN_WEBSITE_LIMIT — per-user website cap (default: 5)
+#  FREE_PLAN_DEPLOY_LIMIT  — per-user monthly deploy cap (default: 100)
+#
+#  --- Optional (Cloudflare Pages mode only) ---
+#  CF_ACCOUNT_ID          — your Cloudflare account ID
+#
+#  --- Optional (email features) ---
+#  EMAIL_SERVER           — SMTP URL e.g. "smtps://user:pass@smtp.mailgun.org:465"
+#  EMAIL_FROM             — e.g. "VELTRIX <noreply@yourdomain.com>"
+#
+#  --- Optional (Postgres on Netlify) ---
+#  NETLIFY_DATABASE_URL   — alternative env name; ensure DATABASE_URL is set
+#                           to the same value in production.

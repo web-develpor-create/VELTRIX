@@ -1,0 +1,239 @@
+// VELTRIX — Prisma schema
+// Local development uses SQLite (per fullstack-dev skill spec).
+// On Netlify, change `provider` to "postgresql" and set
+//   DATABASE_URL=postgresql://...   (Neon, Supabase, Railway, etc.)
+// The schema itself is provider-agnostic — same models work on both.
+// See DEPLOYMENT.md for the one-line switch.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // For Netlify production, change this to:  provider = "postgresql"
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+//  Users & Auth
+// ============================================================
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String?
+  passwordHash    String
+  role            String   @default("user") // "user" | "admin"
+  emailVerified   Boolean  @default(false)
+  emailVerifyToken String? @unique
+  resetToken      String?  @unique
+  resetExpires    DateTime?
+  status          String   @default("active") // "active" | "suspended" | "banned"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastLoginAt     DateTime?
+
+  websites        Website[]
+  sessions        Session[]
+  deployments     Deployment[]
+  domains         Domain[]
+  supportRequests SupportRequest[]
+  auditLogs       AuditLog[]
+  usageRecords    UsageRecord[]
+  hostingConnection HostingConnection?
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  ipAddress    String?
+  userAgent    String?
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ============================================================
+//  Websites & Builder
+// ============================================================
+
+model Website {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  slug          String   // unique-per-user URL slug for project name
+  template      String   // template id used as starting point
+  title         String?
+  description   String?
+  favicon       String?
+  // SiteConfig stored as JSON string: sections, theme, content blocks
+  content       String   @default("{}")
+  status        String   @default("draft") // "draft" | "published" | "unpublished"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  publishedAt   DateTime?
+
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions      SiteVersion[]
+  deployments   Deployment[]
+  domains       Domain[]
+
+  @@unique([userId, slug])
+  @@index([userId])
+  @@index([status])
+}
+
+model SiteVersion {
+  id          String   @id @default(cuid())
+  websiteId   String
+  label       String   // e.g. "v1", "draft-2026-10-24"
+  content     String
+  createdAt   DateTime @default(now())
+  website     Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId])
+}
+
+// ============================================================
+//  Hosting Connections & Deployments
+// ============================================================
+
+// Per-user OAuth/API connection to the hosting provider (Netlify by default).
+// We never store the user's password — only a scoped personal access token
+// that they create on their own Netlify account, or an OAuth access_token
+// when the OAuth flow is enabled.
+model HostingConnection {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  provider     String   @default("netlify") // "netlify" | "cloudflare_pages"
+  // Encrypted at rest using app-level symmetric encryption (see lib/crypto).
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  scopes       String?
+  providerUserId String?
+  providerEmail  String?
+  connectedAt  DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Deployment {
+  id            String   @id @default(cuid())
+  websiteId     String
+  userId        String
+  provider      String   @default("netlify")
+  providerSiteId String? // Netlify site_id
+  providerDeployId String? // Netlify deploy_id
+  url           String?  // The real provider-issued URL
+  sslUrl        String?
+  state         String   @default("pending") // "pending" | "building" | "ready" | "error"
+  errorMessage  String?
+  trigger       String   @default("publish") // "publish" | "redeploy" | "rollback"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  website       Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId])
+  @@index([userId])
+  @@index([state])
+}
+
+// ============================================================
+//  Domains
+// ============================================================
+
+model Domain {
+  id           String   @id @default(cuid())
+  websiteId    String
+  userId       String
+  kind         String   // "subdomain" | "custom"
+  hostname     String   @unique // e.g. "my-shop.pages.dev" or "shop.example.com"
+  verified     Boolean  @default(false)
+  verificationToken String?
+  sslProvisioned Boolean @default(false)
+  dnsRecords   String?  // JSON of required DNS records we showed the user
+  status       String   @default("pending") // "pending" | "active" | "failed"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  website      Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId])
+  @@index([userId])
+}
+
+// ============================================================
+//  Usage, Support, Audit
+// ============================================================
+
+model UsageRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  metric       String   // "websites" | "deployments" | "bandwidth_mb" | "build_minutes"
+  value        Int      @default(0)
+  periodStart  DateTime
+  periodEnd    DateTime
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, metric, periodStart])
+  @@index([userId])
+}
+
+model SupportRequest {
+  id           String   @id @default(cuid())
+  userId       String
+  subject      String
+  category     String   @default("general") // "general" | "billing" | "deployment" | "abuse" | "bug"
+  message      String
+  status       String   @default("open") // "open" | "in_progress" | "resolved" | "closed"
+  priority     String   @default("normal") // "low" | "normal" | "high" | "urgent"
+  response     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  actor        String   // user email or "system"
+  action       String   // e.g. "website.publish", "user.suspend", "admin.impersonate"
+  targetType   String?  // "website" | "user" | "deployment" | "domain"
+  targetId     String?
+  metadata     String?  // JSON string
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============================================================
+//  Site configuration (admin-managed)
+// ============================================================
+
+model SiteConfig {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  value        String   // JSON-encoded value
+  updatedAt    DateTime @updatedAt
+}
