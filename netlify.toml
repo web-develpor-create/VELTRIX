@@ -5,19 +5,16 @@
 
 [build]
   command = "bun run db:generate && bun run build"
-  # Next.js standalone output → .next/standalone is the deploy target
-  publish = ".next/standalone"
-  functions = ".next/standalone"
+  # Netlify's Next.js runtime packages the pages and server routes from .next.
+  publish = ".next"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
-  # Bun is supported on Netlify via the bun-runtime plugin
-  # but we set npm_config flags to ensure Prisma generates correctly.
+  # Allow the existing dependency tree during npm installation.
   NPM_FLAGS = "--legacy-peer-deps"
-
-# Prisma needs the binary engine even on serverless
-[build.environment.PRISMA_CLI_QUERY_ENGINE_TYPE]
-  value = "binary"
+  # Environment variables must be strings, not nested TOML tables.
+  PRISMA_CLI_QUERY_ENGINE_TYPE = "binary"
 
 # ============================================================
 #  Headers — security hardening
